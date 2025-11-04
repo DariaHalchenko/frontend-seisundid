@@ -1,150 +1,215 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import "./App.css";
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function App() {
   const [poed, setPoed] = useState([]);
-  const [graafik, setGraafik] = useState([]);
-  const [activeTable, setActiveTable] = useState("poed");
+  const [selectedStore, setSelectedStore] = useState("");
+  const [selectedTime, setSelectedTime] = useState(() => new Date().toTimeString().split(" ")[0]);
+  const [selectedDay, setSelectedDay] = useState(dayNames[new Date().getDay()]);
+  const [statusFilter, setStatusFilter] = useState("all");
 
-  const [filterShop, setFilterShop] = useState(""); // название магазина
-  const [filterDay, setFilterDay] = useState(new Date().getDay()); // день недели
-  const [filterTime, setFilterTime] = useState("12:00:00"); // текущее время
-  const [filterOpen, setFilterOpen] = useState("all"); // all, open, closed
-
-  const fetchJson = async (url, options = {}) => {
+  const fetchJson = async (url) => {
     try {
-      const res = await fetch(url, options);
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const contentType = res.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        return await res.json();
-      } else {
-        return await res.text();
-      }
+      return await res.json();
     } catch (err) {
-      console.error("Fetch error:", err);
-      return null;
+      console.error(err);
+      return [];
     }
   };
 
-  const loadPoed = async () => setPoed(await fetchJson("https://localhost:7011/api/Pood"));
-  const loadGraafik = async () => setGraafik(await fetchJson("https://localhost:7011/api/PaevaGraafik"));
+  const loadPoed = useCallback(async () => {
+    const data = await fetchJson("https://localhost:7011/api/Pood");
+    setPoed(data || []);
+  }, []);
 
-  useEffect(() => { loadPoed(); loadGraafik(); }, []);
+  useEffect(() => { loadPoed(); }, [loadPoed]);
 
-  const addHour = async (id) => { await fetchJson(`https://localhost:7011/api/Pood/${id}/add-hour`, { method: "POST" }); loadPoed(); };
-  const addDay = async (id) => { await fetchJson(`https://localhost:7011/api/Pood/${id}/add-day`, { method: "POST" }); loadPoed(); };
+  const getStoreState = (graafik, dayIndex, time) => {
+    const g = graafik?.find(x => x.paev === dayIndex);
+    if (!g) return { state: "closed", untilOpen: "-", untilClose: "-" };
 
-  const isOpenAtTime = (p, day, time) => {
-    const g = p.graafik?.find(x => x.paev === day);
-    if (!g) return false;
-    if (g.avatudAlates === "00:00:00" && g.avatudKuni === "00:00:00") return false;
-    const t = time.split(":").map(Number);
-    const tTime = t[0] * 3600 + t[1] * 60 + t[2];
-    const from = g.avatudAlates.split(":").map(Number);
-    const fromTime = from[0] * 3600 + from[1] * 60 + from[2];
-    const to = g.avatudKuni.split(":").map(Number);
-    const toTime = to[0] * 3600 + to[1] * 60 + to[2];
-    return tTime >= fromTime && tTime < toTime;
+    const [h, m, s] = time.split(":").map(Number);
+    const nowSec = h * 3600 + m * 60 + s;
+
+    if (g.avatudAlates === "00:00:00" && g.avatudKuni === "00:00:00") {
+      return { state: "holiday", untilOpen: "-", untilClose: "-" };
+    }
+
+    const [fromH, fromM, fromS] = g.avatudAlates.split(":").map(Number);
+    const fromSec = fromH * 3600 + fromM * 60 + fromS;
+    const [toH, toM, toS] = g.avatudKuni.split(":").map(Number);
+    const toSec = toH * 3600 + toM * 60 + toS;
+
+    if (nowSec >= fromSec && nowSec < toSec) {
+      const diff = toSec - nowSec;
+      const hours = Math.floor(diff / 3600);
+      const minutes = Math.floor((diff % 3600) / 60);
+      return { state: "open", untilOpen: "-", untilClose: `${hours}h ${minutes}m` };
+    } else {
+      const diff = nowSec < fromSec ? fromSec - nowSec : 24 * 3600 - nowSec + fromSec;
+      const hours = Math.floor(diff / 3600);
+      const minutes = Math.floor((diff % 3600) / 60);
+      return { state: "closed", untilOpen: `${hours}h ${minutes}m`, untilClose: "-" };
+    }
   };
 
-  // --- фильтрованные данные ---
-  const filteredPoed = poed
-    .filter(p => !filterShop || p.nimi === filterShop)
-    .filter(p => {
-      if (filterOpen === "all") return true;
-      const open = isOpenAtTime(p, filterDay, filterTime);
-      return filterOpen === "open" ? open : !open;
-    });
+  const getRowColor = (p) => {
+    const dayIndex = dayNames.indexOf(selectedDay);
+    const g = p.graafik?.find(x => x.paev === dayIndex);
+    if (!g) return "#f0f0f0";
+
+    const [h, m, s] = selectedTime.split(":").map(Number);
+    const nowSec = h * 3600 + m * 60 + s;
+
+    if (g.avatudAlates === "00:00:00" && g.avatudKuni === "00:00:00") return "#d3d3d3"; // puhkus
+
+    const [fromH, fromM, fromS] = g.avatudAlates.split(":").map(Number);
+    const fromSec = fromH * 3600 + fromM * 60 + fromS;
+    const [toH, toM, toS] = g.avatudKuni.split(":").map(Number);
+    const toSec = toH * 3600 + toM * 60 + toS;
+
+    if (nowSec >= fromSec && nowSec < toSec) {
+      if (toSec - nowSec <= 3600) return "#ffa500"; // varsti sulgub
+      return "#90ee90"; // avatud
+    } else if (fromSec - nowSec <= 3600 && fromSec - nowSec > 0) {
+      return "#ffff99"; // varsti avaneb
+    }
+    return "#f0f0f0"; // suletud
+  };
+
+  const filteredPoed = poed.filter(p => {
+    const dayIndex = dayNames.indexOf(selectedDay);
+    const g = p.graafik?.find(x => x.paev === dayIndex);
+    if (!g) return false;
+
+    const stateObj = getStoreState(p.graafik, dayIndex, selectedTime);
+    if (statusFilter !== "all" && stateObj.state !== statusFilter) return false;
+    return true;
+  });
+
+  const selectedPoed = poed.find(p => p.nimi === selectedStore);
 
   return (
-    <div style={{ textAlign: "center", fontFamily: "Arial, sans-serif" }}>
-      <h1>Pood & PaevaGraafik</h1>
+    <div style={{ fontFamily: "Arial, sans-serif", padding: "20px", background: "#f9f9f9" }}>
+      <h1 style={{ textAlign: "center", color: "#333" }}>Pood</h1>
 
-      <nav>
-        <button onClick={() => setActiveTable("poed")}>Poed</button>
-        <button onClick={() => setActiveTable("graafik")}>Graafik</button>
-      </nav>
+      {/* Filtrid */}
+      <div style={{ marginBottom: "20px" }}>
+        <label>Vali pood: </label>
+        <select style={filterStyle} value={selectedStore} onChange={e => setSelectedStore(e.target.value)}>
+          <option value="">-- vali --</option>
+          {poed.map(p => <option key={p.id} value={p.nimi}>{p.nimi}</option>)}
+        </select>
 
-      {activeTable === "poed" && (
-        <div>
-          <h2>Poed</h2>
+        <input type="time" value={selectedTime} onChange={e => setSelectedTime(e.target.value)} style={{ marginLeft: "10px" }} />
 
-          <div>
-            <label>Магазин: </label>
-            <select value={filterShop} onChange={e => setFilterShop(e.target.value)}>
-              <option value="">Все</option>
-              {poed.map(p => <option key={p.id} value={p.nimi}>{p.nimi}</option>)}
-            </select>
+        <select value={selectedDay} onChange={e => setSelectedDay(e.target.value)} style={{ marginLeft: "5px" }}>
+          {dayNames.map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
 
-            <label> День недели: </label>
-            <select value={filterDay} onChange={e => setFilterDay(Number(e.target.value))}>
-              {dayNames.map((d, i) => <option key={i} value={i}>{d}</option>)}
-            </select>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ marginLeft: "10px" }}>
+          <option value="all">Kõik</option>
+          <option value="open">Avatud</option>
+          <option value="closed">Suletud</option>
+          <option value="holiday">Puhkus</option>
+          <option value="soonOpen">Varsti avaneb</option>
+          <option value="soonClose">Varsti sulgub</option>
+        </select>
 
-            <label> Время: </label>
-            <input type="time" value={filterTime} onChange={e => setFilterTime(e.target.value)} />
+        <button
+          style={{ ...btnStyle, marginLeft: "10px", background: "#f44336" }}
+          onClick={() => {
+            setSelectedStore("");
+            setSelectedDay(dayNames[new Date().getDay()]);
+            setSelectedTime(new Date().toTimeString().split(" ")[0]);
+            setStatusFilter("all");
+          }}
+        >
+          Lähtesta filtrid
+        </button>
+      </div>
 
-            <label> Статус: </label>
-            <select value={filterOpen} onChange={e => setFilterOpen(e.target.value)}>
-              <option value="all">Все</option>
-              <option value="open">Открытые</option>
-              <option value="closed">Закрытые</option>
-            </select>
-          </div>
+      {/* Legend */}
+      <div style={{ marginBottom: "10px" }}>
+        <span style={{ backgroundColor: "#90ee90", padding: "3px 6px", marginRight: "5px" }}>Avatud</span>
+        <span style={{ backgroundColor: "#f0f0f0", padding: "3px 6px", marginRight: "5px" }}>Suletud</span>
+        <span style={{ backgroundColor: "#ffff99", padding: "3px 6px", marginRight: "5px" }}>Varsti avaneb</span>
+        <span style={{ backgroundColor: "#ffa500", padding: "3px 6px", marginRight: "5px" }}>Varsti sulgub</span>
+        <span style={{ backgroundColor: "#d3d3d3", padding: "3px 6px", marginRight: "5px" }}>Puhkus</span>
+      </div>
 
-          <table>
+      {/* Pood tabel */}
+      <h2>Kõik poed</h2>
+      <table style={tableStyle}>
+        <thead>
+          <tr style={theadStyle}>
+            <th style={thStyle}>Nimi</th>
+            <th style={thStyle}>TananePaev</th>
+            <th style={thStyle}>PraeguneAeg</th>
+            <th style={thStyle}>OnAvatud</th>
+            <th style={thStyle}>Avamiseni</th>
+            <th style={thStyle}>Sulgemiseni</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredPoed.map(p => {
+            const stateObj = getStoreState(p.graafik, dayNames.indexOf(selectedDay), selectedTime);
+            return (
+              <tr key={p.id} style={{ ...trStyle, backgroundColor: getRowColor(p) }}>
+                <td style={tdStyle}>{p.nimi}</td>
+                <td style={tdStyle}>{selectedDay}</td>
+                <td style={tdStyle}>{selectedTime}</td>
+                <td style={tdStyle}>{stateObj.state === "open" ? "Avatud" : stateObj.state === "holiday" ? "Puhkus" : "Suletud"}</td>
+                <td style={tdStyle}>{stateObj.untilOpen}</td>
+                <td style={tdStyle}>{stateObj.untilClose}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {/* Graafik tabel */}
+      {selectedPoed && (
+        <>
+          <h2 style={{ marginTop: "20px" }}>{selectedPoed.nimi} Graafik</h2>
+          <table style={tableStyle}>
             <thead>
-              <tr>
-                <th>ID</th><th>Название</th><th>День недели</th><th>Время открытия</th><th>Время закрытия</th><th>Статус</th><th>Действия</th>
+              <tr style={theadStyle}>
+                <th style={thStyle}>Paev</th>
+                <th style={thStyle}>AvatudAlates</th>
+                <th style={thStyle}>AvatudKuni</th>
               </tr>
             </thead>
             <tbody>
-              {filteredPoed.map(p => p.graafik?.map(g => (
-                <tr key={`${p.id}-${g.paev}`}>
-                  <td>{p.id}</td>
-                  <td>{p.nimi}</td>
-                  <td>{dayNames[g.paev]}</td>
-                  <td>{g.avatudAlates === "00:00:00" ? "Выходной" : g.avatudAlates}</td>
-                  <td>{g.avatudKuni === "00:00:00" ? "Выходной" : g.avatudKuni}</td>
-                  <td>{isOpenAtTime(p, g.paev, filterTime) ? "Открыт" : "Закрыт"}</td>
-                  <td>
-                    <button onClick={() => addHour(p.id)}>+1 час</button>
-                    <button onClick={() => addDay(p.id)}>+1 день</button>
-                  </td>
-                </tr>
-              )))}
+              {selectedPoed.graafik.map(g => {
+                const isHoliday = g.avatudAlates === "00:00:00" && g.avatudKuni === "00:00:00";
+                return (
+                  <tr key={g.id} style={{ ...trStyle, backgroundColor: isHoliday ? "#d3d3d3" : "#90ee90" }}>
+                    <td style={tdStyle}>{dayNames[g.paev]}</td>
+                    <td style={tdStyle}>{isHoliday ? "Puhkus" : g.avatudAlates}</td>
+                    <td style={tdStyle}>{isHoliday ? "Puhkus" : g.avatudKuni}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-        </div>
-      )}
-
-      {activeTable === "graafik" && (
-        <div>
-          <h2>Graafik</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Магазин</th><th>День</th><th>AvatudAlates</th><th>AvatudKuni</th>
-              </tr>
-            </thead>
-            <tbody>
-              {poed.map(p => p.graafik?.map(g => (
-                <tr key={`${p.id}-${g.paev}`}>
-                  <td>{p.nimi}</td>
-                  <td>{dayNames[g.paev]}</td>
-                  <td>{g.avatudAlates}</td>
-                  <td>{g.avatudKuni}</td>
-                </tr>
-              )))}
-            </tbody>
-          </table>
-        </div>
+        </>
       )}
     </div>
   );
 }
+
+// Stiilid
+const tableStyle = { width: "100%", borderCollapse: "collapse", boxShadow: "0 2px 5px rgba(0,0,0,0.1)", marginTop: "10px" };
+const theadStyle = { background: "#4CAF50", color: "white" };
+const trStyle = { background: "#fff", borderBottom: "1px solid #ddd" };
+const thStyle = { border: "1px solid #ddd", padding: "10px", textAlign: "center" };
+const tdStyle = { border: "1px solid #ddd", padding: "8px", textAlign: "center" };
+const btnStyle = { marginLeft: "5px", padding: "5px 10px", background: "#4CAF50", color: "white", border: "none", borderRadius: "3px", cursor: "pointer" };
+const filterStyle = { padding: "5px 10px", borderRadius: "4px", border: "1px solid #ccc", marginLeft: "10px" };
 
 export default App;
