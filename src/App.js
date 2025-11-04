@@ -1,46 +1,18 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 
+const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
 function App() {
   const [poed, setPoed] = useState([]);
   const [graafik, setGraafik] = useState([]);
   const [activeTable, setActiveTable] = useState("poed");
-  const [timeQuery, setTimeQuery] = useState("12:00:00");
-  const [dayQuery, setDayQuery] = useState(1);
 
-  // --- массив дней недели ---
-  const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const [filterShop, setFilterShop] = useState(""); // название магазина
+  const [filterDay, setFilterDay] = useState(new Date().getDay()); // день недели
+  const [filterTime, setFilterTime] = useState("12:00:00"); // текущее время
+  const [filterOpen, setFilterOpen] = useState("all"); // all, open, closed
 
-  // --- стили таблиц и кнопок ---
-  const tableStyle = {
-    border: "1px solid #ddd",
-    borderCollapse: "collapse",
-    width: "90%",
-    margin: "20px auto",
-    boxShadow: "0 3px 10px rgba(0,0,0,0.1)",
-  };
-  const thStyle = {
-    border: "1px solid #ddd",
-    padding: "12px",
-    backgroundColor: "#04AA6D",
-    color: "white",
-    textTransform: "uppercase",
-  };
-  const tdStyle = { border: "1px solid #ddd", padding: "8px", textAlign: "center" };
-  const navButton = (isActive) => ({
-    padding: "10px 18px",
-    marginRight: "10px",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: "bold",
-    backgroundColor: isActive ? "#04AA6D" : "#e6e6e6",
-    color: isActive ? "white" : "#333",
-    transition: "all 0.3s ease",
-  });
-  const navContainer = { margin: "20px auto", display: "flex", justifyContent: "center", flexWrap: "wrap", gap: "10px" };
-
-  // --- функция для безопасного fetch ---
   const fetchJson = async (url, options = {}) => {
     try {
       const res = await fetch(url, options);
@@ -57,116 +29,116 @@ function App() {
     }
   };
 
-  // --- загрузка данных ---
-  const loadPoed = async () => {
-    const data = await fetchJson("https://localhost:7011/api/Pood");
-    if (data) setPoed(data);
+  const loadPoed = async () => setPoed(await fetchJson("https://localhost:7011/api/Pood"));
+  const loadGraafik = async () => setGraafik(await fetchJson("https://localhost:7011/api/PaevaGraafik"));
+
+  useEffect(() => { loadPoed(); loadGraafik(); }, []);
+
+  const addHour = async (id) => { await fetchJson(`https://localhost:7011/api/Pood/${id}/add-hour`, { method: "POST" }); loadPoed(); };
+  const addDay = async (id) => { await fetchJson(`https://localhost:7011/api/Pood/${id}/add-day`, { method: "POST" }); loadPoed(); };
+
+  const isOpenAtTime = (p, day, time) => {
+    const g = p.graafik?.find(x => x.paev === day);
+    if (!g) return false;
+    if (g.avatudAlates === "00:00:00" && g.avatudKuni === "00:00:00") return false;
+    const t = time.split(":").map(Number);
+    const tTime = t[0] * 3600 + t[1] * 60 + t[2];
+    const from = g.avatudAlates.split(":").map(Number);
+    const fromTime = from[0] * 3600 + from[1] * 60 + from[2];
+    const to = g.avatudKuni.split(":").map(Number);
+    const toTime = to[0] * 3600 + to[1] * 60 + to[2];
+    return tTime >= fromTime && tTime < toTime;
   };
 
-  const loadGraafik = async () => {
-    const data = await fetchJson("https://localhost:7011/api/PaevaGraafik");
-    if (data) setGraafik(data);
-  };
-
-  useEffect(() => {
-    loadPoed();
-    loadGraafik();
-  }, []);
-
-  // --- действия по кнопкам ---
-  const addHour = async (id) => {
-    const res = await fetchJson(`https://localhost:7011/api/Pood/${id}/add-hour`, { method: "POST" });
-    alert(res);
-    loadPoed();
-  };
-
-  const addDay = async (id) => {
-    const res = await fetchJson(`https://localhost:7011/api/Pood/${id}/add-day`, { method: "POST" });
-    alert(res);
-    loadPoed();
-  };
-
-  const checkTime = async () => {
-    const res = await fetchJson(`https://localhost:7011/api/Pood/check-time?time=${timeQuery}`);
-    if (res) alert(res.join("\n"));
-  };
-
-  const checkDayAndTime = async () => {
-    const res = await fetchJson(`https://localhost:7011/api/Pood/check?day=${dayQuery}&time=${timeQuery}`);
-    if (res) alert(res.join("\n"));
-  };
+  // --- фильтрованные данные ---
+  const filteredPoed = poed
+    .filter(p => !filterShop || p.nimi === filterShop)
+    .filter(p => {
+      if (filterOpen === "all") return true;
+      const open = isOpenAtTime(p, filterDay, filterTime);
+      return filterOpen === "open" ? open : !open;
+    });
 
   return (
-    <div style={{ textAlign: "center", fontFamily: "Arial, sans-serif", backgroundColor: "#fafafa", minHeight: "100vh" }}>
-      <h1 style={{ marginTop: "20px", color: "#333" }}>Pood & PaevaGraafik</h1>
+    <div style={{ textAlign: "center", fontFamily: "Arial, sans-serif" }}>
+      <h1>Pood & PaevaGraafik</h1>
 
-      <nav style={navContainer}>
-        <button style={navButton(activeTable === "poed")} onClick={() => setActiveTable("poed")}>Poed</button>
-        <button style={navButton(activeTable === "graafik")} onClick={() => setActiveTable("graafik")}>PaevaGraafik</button>
+      <nav>
+        <button onClick={() => setActiveTable("poed")}>Poed</button>
+        <button onClick={() => setActiveTable("graafik")}>Graafik</button>
       </nav>
 
-      {/* --- POED --- */}
       {activeTable === "poed" && (
         <div>
           <h2>Poed</h2>
-          <div style={{ marginBottom: "10px" }}>
-            <input type="time" value={timeQuery} onChange={e => setTimeQuery(e.target.value)} />{" "}
-            <input type="number" min="0" max="6" value={dayQuery} onChange={e => setDayQuery(e.target.value)} />
-            <button onClick={checkTime}>Check Time</button>
-            <button onClick={checkDayAndTime}>Check Day & Time</button>
+
+          <div>
+            <label>Магазин: </label>
+            <select value={filterShop} onChange={e => setFilterShop(e.target.value)}>
+              <option value="">Все</option>
+              {poed.map(p => <option key={p.id} value={p.nimi}>{p.nimi}</option>)}
+            </select>
+
+            <label> День недели: </label>
+            <select value={filterDay} onChange={e => setFilterDay(Number(e.target.value))}>
+              {dayNames.map((d, i) => <option key={i} value={i}>{d}</option>)}
+            </select>
+
+            <label> Время: </label>
+            <input type="time" value={filterTime} onChange={e => setFilterTime(e.target.value)} />
+
+            <label> Статус: </label>
+            <select value={filterOpen} onChange={e => setFilterOpen(e.target.value)}>
+              <option value="all">Все</option>
+              <option value="open">Открытые</option>
+              <option value="closed">Закрытые</option>
+            </select>
           </div>
-          <table style={tableStyle}>
+
+          <table>
             <thead>
               <tr>
-                <th style={thStyle}>ID</th>
-                <th style={thStyle}>Nimi</th>
-                <th style={thStyle}>TananePaev</th>
-                <th style={thStyle}>PraeguneAeg</th>
-                <th style={thStyle}>OnAvatud</th>
-                <th style={thStyle}>Tegevused</th>
+                <th>ID</th><th>Название</th><th>День недели</th><th>Время открытия</th><th>Время закрытия</th><th>Статус</th><th>Действия</th>
               </tr>
             </thead>
             <tbody>
-              {poed.map(p => (
-                <tr key={p.id}>
-                  <td style={tdStyle}>{p.id}</td>
-                  <td style={tdStyle}>{p.nimi}</td>
-                  <td style={tdStyle}>{weekdays[p.tananePaev]}</td>
-                  <td style={tdStyle}>{p.praeguneAeg}</td>
-                  <td style={tdStyle}>{p.onAvatud ? "Jah" : "Ei"}</td>
-                  <td style={tdStyle}>
-                    <button onClick={() => addHour(p.id)}>+1 tund</button>{" "}
-                    <button onClick={() => addDay(p.id)}>+1 päev</button>
+              {filteredPoed.map(p => p.graafik?.map(g => (
+                <tr key={`${p.id}-${g.paev}`}>
+                  <td>{p.id}</td>
+                  <td>{p.nimi}</td>
+                  <td>{dayNames[g.paev]}</td>
+                  <td>{g.avatudAlates === "00:00:00" ? "Выходной" : g.avatudAlates}</td>
+                  <td>{g.avatudKuni === "00:00:00" ? "Выходной" : g.avatudKuni}</td>
+                  <td>{isOpenAtTime(p, g.paev, filterTime) ? "Открыт" : "Закрыт"}</td>
+                  <td>
+                    <button onClick={() => addHour(p.id)}>+1 час</button>
+                    <button onClick={() => addDay(p.id)}>+1 день</button>
                   </td>
                 </tr>
-              ))}
+              )))}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* --- PAEVAGRAAFIK --- */}
       {activeTable === "graafik" && (
         <div>
-          <h2>PaevaGraafik</h2>
-          <table style={tableStyle}>
+          <h2>Graafik</h2>
+          <table>
             <thead>
               <tr>
-                <th style={thStyle}>PoodId</th>
-                <th style={thStyle}>Paev</th>
-                <th style={thStyle}>AvatudAlates</th>
-                <th style={thStyle}>AvatudKuni</th>
+                <th>Магазин</th><th>День</th><th>AvatudAlates</th><th>AvatudKuni</th>
               </tr>
             </thead>
             <tbody>
-              {graafik.map(g => (
-                <tr key={`${g.poodId}-${g.paev}`}>
-                  <td style={tdStyle}>{g.poodId}</td>
-                  <td style={tdStyle}>{weekdays[g.paev]}</td>
-                  <td style={tdStyle}>{g.avatudAlates || "-"}</td>
-                  <td style={tdStyle}>{g.avatudKuni || "-"}</td>
+              {poed.map(p => p.graafik?.map(g => (
+                <tr key={`${p.id}-${g.paev}`}>
+                  <td>{p.nimi}</td>
+                  <td>{dayNames[g.paev]}</td>
+                  <td>{g.avatudAlates}</td>
+                  <td>{g.avatudKuni}</td>
                 </tr>
-              ))}
+              )))}
             </tbody>
           </table>
         </div>
